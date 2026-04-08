@@ -1,0 +1,26 @@
+{
+  "name": "@allokai/sdk",
+  "version": "0.1.0",
+  "description": "Allokai Voice AI TypeScript/JavaScript SDK",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src"],
+  "keywords": ["voice", "ai", "speech", "tts", "stt", "conversational", "allokai"],
+  "license": "MIT",
+  "homepage": "https://allokai.ru",
+  "bugs": { "url": "https://github.com/allokai/allokai-node/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/allokai/allokai-node"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
