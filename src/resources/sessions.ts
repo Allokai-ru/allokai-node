@@ -13,6 +13,7 @@ export interface StartSessionOptions {
 export interface ListSessionsOptions {
   limit?: number;
   offset?: number;
+  assistant_id?: string;
   status?: 'active' | 'completed' | 'failed';
   search?: string;
   date_from?: string;
@@ -37,8 +38,12 @@ export class SessionsResource {
   }
 
   list(options: ListSessionsOptions = {}): Promise<Session[]> {
-    const { limit = 50, offset = 0, status, search, date_from, date_to } = options;
-    return this.http.get<Session[]>('/sessions', { limit, offset, status, search, date_from, date_to });
+    const { limit = 50, offset = 0, assistant_id, status, search, date_from, date_to } = options;
+    return this.http.get<Session[]>('/sessions', { limit, offset, assistant_id, status, search, date_from, date_to });
+  }
+
+  analysis(sessionId: string): Promise<Record<string, unknown>> {
+    return this.http.get<Record<string, unknown>>(`/sessions/${sessionId}/analysis`);
   }
 
   transcript(sessionId: string): Promise<TranscriptEntry[]> {
