@@ -66,7 +66,7 @@ describe('parseServerMessage', () => {
 });
 
 describe('ClientMessage type completeness', () => {
-  it('allows all 8 client discriminator values at the type level', () => {
+  it('allows all 7 client discriminator values at the type level', () => {
     const samples: ClientMessage[] = [
       { type: 'session.start' },
       { type: 'session.start', dynamic_variables: { name: 'Ivan' } },
