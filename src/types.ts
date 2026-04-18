@@ -162,13 +162,3 @@ export interface Transaction {
   created_at: string;
 }
 
-// WebSocket server → client message types
-export type ServerEvent =
-  | { type: 'status'; status: 'ready' | 'listening' | 'thinking' | 'speaking' }
-  | { type: 'transcript'; role: 'user'; text: string }
-  | { type: 'bot_text'; text: string; done: boolean }
-  | { type: 'audio'; data: ArrayBuffer }
-  | { type: 'tool_call'; tool_call_id: string; tool_name: string; parameters: Record<string, unknown> }
-  | { type: 'metadata'; conversation_id: string; agent_id: string }
-  | { type: 'error'; message: string }
-  | { type: 'session_ended' };
