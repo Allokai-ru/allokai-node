@@ -20,16 +20,13 @@ export class AudioPlayback {
   private readonly gainNode: GainNode;
   private nextStart = 0;
   private scheduled: AudioBufferSourceNode[] = [];
+  private _interruptTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: AudioContext, sampleRate: number) {
     this.ctx = ctx;
     this.sampleRate = sampleRate;
     this.gainNode = ctx.createGain();
     this.gainNode.connect(ctx.destination);
-  }
-
-  get queueDepth(): number {
-    return this.scheduled.length;
   }
 
   enqueue(pcmBuffer: ArrayBuffer): void {
@@ -61,7 +58,13 @@ export class AudioPlayback {
   interrupt(): void {
     const sources = this.scheduled;
     this.scheduled = [];
-    this.nextStart = 0;
+    this.nextStart = this.ctx.currentTime;
+
+    // Cancel any pending gain-restore from a previous interrupt.
+    if (this._interruptTimer !== null) {
+      clearTimeout(this._interruptTimer);
+      this._interruptTimer = null;
+    }
 
     const now = this.ctx.currentTime;
     try {
@@ -71,16 +74,25 @@ export class AudioPlayback {
       // AudioContext closed
     }
 
-    setTimeout(() => {
+    const timerId = setTimeout(() => {
       for (const src of sources) {
         try { src.stop(); } catch { /* already stopped */ }
       }
-      try { this.gainNode.gain.value = 1; } catch { /* closed */ }
+      // Only restore gain if this timer is still the active one (not superseded).
+      if (this._interruptTimer === timerId) {
+        this._interruptTimer = null;
+        try { this.gainNode.gain.value = 1; } catch { /* closed */ }
+      }
     }, 200);
+    this._interruptTimer = timerId;
   }
 
   async close(): Promise<void> {
     this.interrupt();
+    if (this._interruptTimer !== null) {
+      clearTimeout(this._interruptTimer);
+      this._interruptTimer = null;
+    }
     try { await this.ctx.close(); } catch { /* already closed */ }
   }
 }

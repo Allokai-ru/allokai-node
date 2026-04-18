@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { AudioPlayback, pcm16ToFloat32 } from '../src/audio-playback';
 
 describe('pcm16ToFloat32', () => {
@@ -19,8 +19,12 @@ class FakeBufferSource {
   onended: (() => void) | null = null;
   started = false;
   stopped = false;
+  startTimes: number[] = [];
   connect = vi.fn();
-  start = vi.fn((_when: number) => { this.started = true; });
+  start = vi.fn((when: number) => {
+    this.started = true;
+    this.startTimes.push(when);
+  });
   stop = vi.fn(() => { this.stopped = true; });
 }
 
@@ -37,7 +41,12 @@ class FakeAudioContext {
   currentTime = 0;
   destination = {};
   closed = false;
-  createBufferSource() { return new FakeBufferSource(); }
+  sources: FakeBufferSource[] = [];
+  createBufferSource() {
+    const src = new FakeBufferSource();
+    this.sources.push(src);
+    return src;
+  }
   createGain() { return new FakeGain(); }
   createBuffer(_channels: number, length: number, _rate: number) {
     const data = new Float32Array(length);
@@ -54,27 +63,77 @@ describe('AudioPlayback', () => {
   let playback: AudioPlayback;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     ctx = new FakeAudioContext();
     playback = new AudioPlayback(ctx as unknown as AudioContext, 24000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('schedules chunks with monotonic start times', () => {
     const pcm = new Int16Array(24000 * 0.1);   // 100ms at 24kHz
     playback.enqueue(pcm.buffer);
     playback.enqueue(pcm.buffer);
-    expect(playback.queueDepth).toBe(2);
+
+    const startTimes = ctx.sources.map(s => s.startTimes[0]);
+    expect(startTimes).toHaveLength(2);
+    // Second chunk starts after first chunk ends.
+    expect(startTimes[1]).toBeGreaterThan(startTimes[0]);
   });
 
-  it('interrupt fades gain and stops sources', () => {
+  it('interrupt fades gain and stops sources after 200ms', () => {
     const pcm = new Int16Array(24000 * 0.1);
     playback.enqueue(pcm.buffer);
+    const [src] = ctx.sources;
+
     playback.interrupt();
-    // fade is async (setTimeout 200ms) — just check immediate state
-    expect(playback.queueDepth).toBe(0);
+
+    // Source not stopped yet — timer is pending.
+    expect(src.stopped).toBe(false);
+
+    vi.advanceTimersByTime(200);
+
+    expect(src.stopped).toBe(true);
   });
 
   it('close shuts down AudioContext', async () => {
     await playback.close();
     expect(ctx.closed).toBe(true);
+  });
+
+  it('regression: second interrupt cancels first timer so gain is not restored prematurely', () => {
+    const gain = (playback as unknown as { gainNode: FakeGain }).gainNode.gain;
+    const pcm = new Int16Array(24000 * 0.1);
+
+    // First interrupt: schedules timer1 which would restore gain.value = 1 at +200ms.
+    playback.enqueue(pcm.buffer);
+    playback.interrupt();
+
+    // Second interrupt at +100ms (before timer1 fires): schedules timer2.
+    // timer1 must be cancelled — otherwise it fires at +200ms and resets gain to 1,
+    // clobbering any subsequent fade started by timer2.
+    vi.advanceTimersByTime(100);
+    playback.enqueue(pcm.buffer);
+    playback.interrupt();
+
+    // Simulate gain being set to 0 by the second fade (as would happen in real AudioContext).
+    gain.value = 0;
+
+    // Advance 200ms past the second interrupt (total ~300ms from start).
+    // timer1 must NOT fire — it was cleared. Only timer2 fires, which stops secondSrc
+    // and restores gain.
+    vi.advanceTimersByTime(200);
+
+    const [firstSrc, secondSrc] = ctx.sources;
+
+    // firstSrc stopped by timer2 would be wrong (timer2 has secondSrc). firstSrc was
+    // snapshotted by interrupt1 → timer1 was cleared, so firstSrc.stop() was never called.
+    // secondSrc was snapshotted by interrupt2 → timer2 fires and stops it.
+    expect(firstSrc.stopped).toBe(false); // orphan timer1 was cancelled
+    expect(secondSrc.stopped).toBe(true); // timer2 fires normally
+    // Gain was restored by timer2 (no orphan stomp).
+    expect(gain.value).toBe(1);
   });
 });
