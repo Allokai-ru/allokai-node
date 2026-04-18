@@ -5,7 +5,7 @@ export interface MockServerHandle {
   url: (sessionId: string) => string;
   close: () => Promise<void>;
   connections: WebSocket[];
-  lastSubprotocol: string | null;
+  readonly lastSubprotocol: string | null;
 }
 
 /**
@@ -32,7 +32,9 @@ export function startMockServer(
         url: (sessionId: string) => `ws://127.0.0.1:${port}/v1/voice/ws/${sessionId}`,
         close: () => new Promise((r) => wss.close(() => r())),
         connections,
-        lastSubprotocol,
+        get lastSubprotocol() {
+          return lastSubprotocol;
+        },
       });
     });
   });

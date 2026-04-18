@@ -71,7 +71,7 @@ export interface TurnEndedMsg {
   type: 'turn.ended';
   turn_index: number;
   interrupted: boolean;
-  benchmarks: Record<string, number>;
+  benchmarks: Record<string, unknown>;
 }
 
 export interface SpeechStartedMsg {
@@ -165,7 +165,7 @@ export type ServerMessage =
 
 // ── Parsing + guards ────────────────────────────────────────────────────────
 
-const KNOWN_TYPES = new Set([
+export const KNOWN_TYPES = new Set([
   'session.started', 'turn.started', 'turn.ended',
   'speech.started', 'speech.ended',
   'stt.partial', 'stt.final',
