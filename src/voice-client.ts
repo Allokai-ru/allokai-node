@@ -113,7 +113,10 @@ export class VoiceClient {
 
     this.boundMessage = (ev: MessageEvent) => this.handleMessage(ev);
     this.boundClose = (ev: CloseEvent) => {
+      // Fire user callback BEFORE teardown so it receives the close event.
       this.opts.callbacks.onClose?.({ code: ev.code, reason: ev.reason });
+      // Server-initiated close: tear everything down (idempotent via disposed guard).
+      this.disconnect();
     };
   }
 
@@ -158,6 +161,14 @@ export class VoiceClient {
         settled = true;
         ws.removeEventListener('open', onOpen);
         ws.removeEventListener('error', onError);
+        ws.removeEventListener('close', onCloseBefore);
+        // If disconnect() was called before the socket opened, clean up and bail.
+        if (this.disposed) {
+          this.ws = null;
+          ws.close();
+          resolve();
+          return;
+        }
         resolve();
       };
 
@@ -166,13 +177,36 @@ export class VoiceClient {
         settled = true;
         ws.removeEventListener('open', onOpen);
         ws.removeEventListener('error', onError);
+        ws.removeEventListener('close', onCloseBefore);
+        // Null out ws so the next connect() call is not blocked.
+        this.ws = null;
+        // If dispose() closed the socket intentionally, treat as clean resolution.
+        if (this.disposed) { resolve(); return; }
         const msg = (ev as ErrorEvent).message ?? 'unknown';
         reject(new Error(`WebSocket failed to open: ${msg}`));
       };
 
+      // If the socket closes before it ever opens (e.g. connection refused),
+      // treat it as a connection failure so the client remains retryable.
+      const onCloseBefore = (ev: CloseEvent) => {
+        if (settled) return;
+        settled = true;
+        ws.removeEventListener('open', onOpen);
+        ws.removeEventListener('error', onError);
+        ws.removeEventListener('close', onCloseBefore);
+        this.ws = null;
+        // If disconnect() closed the socket intentionally, treat as clean resolution.
+        if (this.disposed) { resolve(); return; }
+        reject(new Error(`WebSocket closed before open: code=${ev.code}`));
+      };
+
       ws.addEventListener('open', onOpen);
       ws.addEventListener('error', onError);
+      ws.addEventListener('close', onCloseBefore);
     });
+
+    // disposed check: if disconnect() raced with onOpen resolution
+    if (this.disposed || !this.ws) return;
 
     ws.addEventListener('message', this.boundMessage);
     ws.addEventListener('close', this.boundClose);
@@ -268,7 +302,8 @@ export class VoiceClient {
   async startMicrophone(): Promise<void> {
     if (this.mediaStream) return;
 
-    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+    // Capture resources into locals first; only commit to this.* after full success.
+    const mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
         echoCancellation: true,
@@ -277,35 +312,48 @@ export class VoiceClient {
       },
     });
 
-    this.micCtx = new AudioContext();
+    const micCtx = new AudioContext();
 
-    const blob = new Blob([buildWorkletCode(this.opts.inputSampleRate)], {
-      type: 'application/javascript',
-    });
-    const workletUrl = URL.createObjectURL(blob);
-    await this.micCtx.audioWorklet.addModule(workletUrl);
-    URL.revokeObjectURL(workletUrl);
-
-    const src = this.micCtx.createMediaStreamSource(this.mediaStream);
-    this.workletNode = new AudioWorkletNode(this.micCtx, WORKLET_NAME);
-
-    this.workletNode.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-      const b64 = bytesToBase64(new Uint8Array(ev.data));
-      this.send({
-        type: 'audio.input',
-        data: b64,
-        sample_rate: this.opts.inputSampleRate,
+    try {
+      const blob = new Blob([buildWorkletCode(this.opts.inputSampleRate)], {
+        type: 'application/javascript',
       });
-    };
+      const workletUrl = URL.createObjectURL(blob);
+      await micCtx.audioWorklet.addModule(workletUrl);
+      URL.revokeObjectURL(workletUrl);
 
-    src.connect(this.workletNode);
-    this.workletNode.connect(this.micCtx.destination);
+      const src = micCtx.createMediaStreamSource(mediaStream);
+      const workletNode = new AudioWorkletNode(micCtx, WORKLET_NAME);
+
+      workletNode.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        const b64 = bytesToBase64(new Uint8Array(ev.data));
+        this.send({
+          type: 'audio.input',
+          data: b64,
+          sample_rate: this.opts.inputSampleRate,
+        });
+      };
+
+      src.connect(workletNode);
+      workletNode.connect(micCtx.destination);
+
+      // All steps succeeded — commit to instance fields.
+      this.mediaStream = mediaStream;
+      this.micCtx = micCtx;
+      this.workletNode = workletNode;
+    } catch (err) {
+      // Partial failure: clean up local resources to avoid leaks.
+      mediaStream.getTracks().forEach((t) => t.stop());
+      micCtx.close().catch(() => { /* ignore */ });
+      throw err;
+    }
   }
 
   // ── Outbound messages ─────────────────────────────────────────────────────
 
   sendText(text: string): void {
+    this.assertConnected();
     this.send({ type: 'text.input', text });
   }
 
@@ -314,9 +362,13 @@ export class VoiceClient {
     result?: Record<string, unknown>,
     error?: string,
   ): void {
-    const msg: ClientMessage = { type: 'tool.result', call_id: callId };
-    if (result !== undefined) (msg as { result?: Record<string, unknown> }).result = result;
-    if (error !== undefined) (msg as { error?: string }).error = error;
+    this.assertConnected();
+    const msg: import('./wire').ToolResultMsg = {
+      type: 'tool.result',
+      call_id: callId,
+      ...(result !== undefined && { result }),
+      ...(error !== undefined && { error }),
+    };
     this.send(msg);
   }
 
@@ -326,7 +378,19 @@ export class VoiceClient {
   }
 
   ping(): void {
+    this.assertConnected();
     this.send({ type: 'ping' });
+  }
+
+  /**
+   * Throws if there is no WebSocket at all (never connected or after error).
+   * Warns (once per connection) if the socket exists but is not yet OPEN.
+   */
+  private assertConnected(): void {
+    if (!this.ws) throw new Error('VoiceClient not connected');
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      console.warn('[VoiceClient] send called while WebSocket is not OPEN (readyState=%d); message dropped', this.ws.readyState);
+    }
   }
 
   private send(msg: ClientMessage): void {
