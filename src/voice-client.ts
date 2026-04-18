@@ -450,7 +450,7 @@ export class VoiceClient {
 // ── Base64 helpers ────────────────────────────────────────────────────────────
 // Using atob/btoa for isomorphic browser + Node 18+ compatibility.
 
-function base64ToBytes(b64: string): Uint8Array {
+export function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) {

@@ -10,7 +10,7 @@ export interface ListSessionsOptions {
   limit?: number;
   offset?: number;
   assistant_id?: string;
-  status?: 'active' | 'completed' | 'failed';
+  status?: 'active' | 'completed' | 'error' | 'timeout';
   search?: string;
   date_from?: string;
   date_to?: string;

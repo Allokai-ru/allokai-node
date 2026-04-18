@@ -17,7 +17,7 @@ This guide walks you through upgrading from the legacy VoiceSession API to the n
 | `onStatus('ready')` | `onSessionStarted(msg)` | Session initialized; contains audio rates |
 | `onStatus('listening')` | `onSpeechStarted(msg)` | User started speaking |
 | `onStatus('thinking')` | `onTurnStarted(msg)` | Agent processing turn |
-| `onStatus('speaking')` | `onSpeechEnded(msg)` | Agent finished speaking |
+| `onStatus('speaking')` | `onSpeechEnded(msg)` | User finished speaking (VAD boundary) |
 | `onTranscript(text)` | `onUserPartial(msg)` + `onUserTurn(msg)` | STT partial & final |
 | `onBotText(text, done)` | `onAgentDelta(msg)` + `onAgentTurn(msg)` | LLM streaming & complete |
 | `onAudio(pcm16)` | `onAudio(msg)` | Agent audio chunk (base64 in msg.data) |
@@ -86,7 +86,7 @@ const callbacks: VoiceClientCallbacks = {
     });
   },
   onSpeechStarted: (msg) => {
-    console.log('User started speaking (turn', msg.turn_index + ')');
+    console.log(`User started speaking (turn ${msg.turn_index})`);
   },
   onUserPartial: (msg) => {
     console.log('STT partial:', msg.text);

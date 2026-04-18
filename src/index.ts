@@ -47,6 +47,7 @@ export {
 // ── Audio Helpers ─────────────────────────────────────────────────────────────
 export { AudioPlayback, pcm16ToFloat32 } from './audio-playback';
 export { buildWorkletCode, WORKLET_NAME } from './audio-worklet';
+export { base64ToBytes } from './voice-client';
 
 // ── REST API Types ───────────────────────────────────────────────────────────
 export type {
