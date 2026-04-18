@@ -8,6 +8,10 @@ export const WORKLET_NAME = 'allokai-mic-processor';
  * The processor is registered globally under WORKLET_NAME.
  */
 export function buildWorkletCode(targetRate: number): string {
+  if (!Number.isFinite(targetRate) || targetRate <= 0 || !Number.isInteger(targetRate)) {
+    throw new RangeError(`targetRate must be a positive integer, got ${targetRate}`);
+  }
+
   return `
 class MicProcessor extends AudioWorkletProcessor {
   constructor() {
